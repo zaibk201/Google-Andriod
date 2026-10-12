@@ -314,4 +314,8 @@ ARTEMIS는 서로 다른 자동화 요구에 맞춘 두 가지 실행 프로필�
 
 이 프로젝트는 [Apache License 2.0](LICENSE)에 따라 라이선스가 부여됩니다.
 
-이 프로젝트에는 [Minitap, Inc.](https://github.com/minitap-ai/mobile-use)에서 개발한 소스 코드가 포함되어 있습니다.
+### 서드파티 코드
+
+Google 소유가 아닌 코드는 [`third_party/`](third_party/) 아래에 업스트림 프로젝트별로 하나씩 디렉터리를 두고, 각 디렉터리에 `LICENSE`와 `METADATA`를 함께 둡니다.
+
+- [`third_party/mobile_use`](third_party/mobile_use/) – Minitap, Inc.의 [mobile-use](https://github.com/minitap-ai/mobile-use) 일부 코드, Apache License 2.0.
