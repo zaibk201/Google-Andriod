@@ -433,6 +433,13 @@ export class SystemService {
   }
 
   /**
+   * Pair with an Android 11+ device using its Wi-Fi pairing code
+   */
+  public pairWirelessAdb(host: string, port: number, code: string): Observable<any> {
+    return this.http.post<any>('/api/system/adb/pair', { host, port, code });
+  }
+
+  /**
    * Fetch the process-wide ADB server endpoint used by Artemis.
    */
   public fetchAdbServerStatus(): Observable<AdbServerStatus> {

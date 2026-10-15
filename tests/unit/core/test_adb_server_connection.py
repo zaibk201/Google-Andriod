@@ -283,6 +283,48 @@ async def test_remote_endpoint_blocks_local_wireless_connection(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_remote_endpoint_blocks_local_wireless_pairing(monkeypatch):
+    monkeypatch.setattr(
+        adb_server_connection,
+        "current_endpoint",
+        lambda: AdbServerEndpoint("127.0.0.1", 5038),
+    )
+
+    result = await ReadinessEngine().pair_wireless_adb("192.168.1.100", 37121, "123456")
+
+    assert result["success"] is False
+    assert "Switch to local ADB" in result["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stdout", "success"),
+    [
+        ("Successfully paired to 192.168.1.100:37121 [guid=adb-XYZ]", True),
+        ("Failed: Wrong password or connection was dropped.", False),
+    ],
+)
+async def test_wireless_pairing_runs_adb_pair(monkeypatch, stdout, success):
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(
+        adb_server_connection,
+        "current_endpoint",
+        lambda: AdbServerEndpoint("127.0.0.1", 5037),
+    )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = await ReadinessEngine().pair_wireless_adb(" 192.168.1.100 ", 37121, "123456")
+
+    assert calls[0][1:] == ["pair", "192.168.1.100:37121", "123456"]
+    assert result["success"] is success
+
+
+@pytest.mark.asyncio
 async def test_remote_endpoint_blocks_local_emulator_launch(monkeypatch):
     monkeypatch.setattr(
         adb_server_connection,

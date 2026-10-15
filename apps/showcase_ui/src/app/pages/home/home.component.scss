@@ -3114,6 +3114,23 @@ $text-light: #94a3b8;
               }
             }
 
+            .wifi-pair-toggle {
+              display: inline-flex;
+              align-items: center;
+              align-self: flex-start;
+              gap: 7px;
+              color: $text-secondary;
+              font-size: 11.5px;
+              cursor: pointer;
+
+              input {
+                width: 15px;
+                height: 15px;
+                margin: 0;
+                accent-color: $primary;
+              }
+            }
+
             .wifi-status-alert {
               display: flex;
               align-items: center;

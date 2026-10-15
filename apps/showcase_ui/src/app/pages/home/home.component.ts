@@ -157,6 +157,10 @@ export class HomeComponent implements OnInit, OnDestroy {
   public wifiHost = signal<string>('192.168.1.100');
   public wifiPort = signal<string>('5555');
   public isConnectingWifi = signal<boolean>(false);
+  public showWifiPairing = signal<boolean>(false);
+  public wifiPairPort = signal<string>('');
+  public wifiPairCode = signal<string>('');
+  public isPairingWifi = signal<boolean>(false);
   public wifiConnectMessage = signal<string | null>(null);
   public wifiConnectError = signal<string | null>(null);
   public adbRestartFeedback = signal<string | null>(null);
@@ -865,6 +869,10 @@ export class HomeComponent implements OnInit, OnDestroy {
         if (cr?.success) {
           this.wifiConnectMessage.set(`Connected to ${host}:${port}!`);
           setTimeout(() => this.wifiConnectMessage.set(null), 4000);
+        } else if (cr?.message?.startsWith('failed to') && !cr.message.includes("'")) {
+          // adb quotes the target only when the network connection itself failed, so
+          // here the phone was reached but did not accept this computer's key.
+          this.wifiConnectError.set(`${cr.message}: the phone did not accept this computer. Tick the box above to pair it first.`);
         } else {
           this.wifiConnectError.set(cr?.message || 'Connection failed. Please check phone IP & Wi-Fi.');
         }
@@ -872,6 +880,52 @@ export class HomeComponent implements OnInit, OnDestroy {
       error: (err) => {
         this.isConnectingWifi.set(false);
         this.wifiConnectError.set(err?.error?.detail || 'Failed to connect. Please check adb connection.');
+      }
+    });
+  }
+
+  public pairWifiDevice(): void {
+    if (this.isRemoteAdbServer()) {
+      this.wifiConnectError.set('Switch to local ADB before pairing a Wireless ADB device.');
+      return;
+    }
+    const host = this.wifiHost().trim();
+    const port = Number(this.wifiPairPort().trim());
+    const code = this.wifiPairCode().trim();
+
+    if (!host) {
+      this.wifiConnectError.set('Please enter a valid IP address.');
+      return;
+    }
+    if (!Number.isInteger(port) || port < 1 || port > 65535 || !/^\d{6}$/.test(code)) {
+      this.wifiConnectError.set('Enter the pairing port and 6-digit code shown on the phone.');
+      return;
+    }
+
+    this.isConnectingWifi.set(true);
+    this.isPairingWifi.set(true);
+    this.wifiConnectError.set(null);
+    this.wifiConnectMessage.set(null);
+
+    this.systemService.pairWirelessAdb(host, port, code).subscribe({
+      next: (res) => {
+        this.isPairingWifi.set(false);
+        const pr = res?.pair_result;
+        if (pr?.success) {
+          // Pairing is remembered by the phone, so only connect is needed next time.
+          this.wifiPairCode.set('');
+          this.wifiPairPort.set('');
+          this.showWifiPairing.set(false);
+          this.connectWifiDevice();
+        } else {
+          this.isConnectingWifi.set(false);
+          this.wifiConnectError.set(pr?.message || 'Pairing failed. Check the pairing code and port.');
+        }
+      },
+      error: (err) => {
+        this.isPairingWifi.set(false);
+        this.isConnectingWifi.set(false);
+        this.wifiConnectError.set(err?.error?.detail || 'Failed to pair. Please check adb connection.');
       }
     });
   }

@@ -163,6 +163,21 @@ async def connect_wireless_adb(request: ConnectAdbRequest):
     }
 
 
+class PairAdbRequest(BaseModel):
+    """Payload to pair with an Android 11+ device for wireless debugging."""
+
+    host: str = Field(description="IP address of Android device")
+    port: int = Field(ge=1, le=65535, description="Pairing port shown with the pairing code")
+    code: str = Field(pattern=r"^\d{6}$", description="Six-digit Wi-Fi pairing code")
+
+
+@router.post("/adb/pair")
+async def pair_wireless_adb(request: PairAdbRequest):
+    """Pair with a device over Wi-Fi so it can then be connected."""
+    pair_result = await readiness_engine.pair_wireless_adb(request.host, request.port, request.code)
+    return {"pair_result": pair_result}
+
+
 class ConnectAdbServerRequest(BaseModel):
     """Payload to select an ADB server endpoint accessible from this computer."""
 

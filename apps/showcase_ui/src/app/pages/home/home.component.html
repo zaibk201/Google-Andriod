@@ -1378,17 +1378,44 @@
                   
                         <div class="wifi-btn-col">
                           <button type="button" class="btn-wifi-connect" [disabled]="isConnectingWifi() || isRemoteAdbServer() || !wifiHost().trim()"
-                            (click)="connectWifiDevice()">
+                            (click)="showWifiPairing() ? pairWifiDevice() : connectWifiDevice()">
                             @if (isConnectingWifi()) {
                             <span class="material-symbols-outlined spinning">sync</span>
-                            <span>Connecting...</span>
+                            <span>{{ isPairingWifi() ? 'Pairing...' : 'Connecting...' }}</span>
                             } @else {
                             <span class="material-symbols-outlined">bolt</span>
-                            <span>Connect</span>
+                            <span>{{ showWifiPairing() ? 'Pair & Connect' : 'Connect' }}</span>
                             }
                           </button>
                         </div>
                         </div>
+
+                        <label class="wifi-pair-toggle">
+                          <input type="checkbox" [ngModel]="showWifiPairing()" (ngModelChange)="showWifiPairing.set($event)" />
+                          <span>New device on Android 11+? Pair it first with a Wi-Fi pairing code</span>
+                        </label>
+
+                        @if (showWifiPairing()) {
+                        <div class="wifi-form-row">
+                          <div class="wifi-input-col ip-col">
+                            <label class="wifi-label">Wi-Fi Pairing Code</label>
+                            <div class="wifi-input-wrap">
+                              <span class="material-symbols-outlined wrap-icon">password</span>
+                              <input type="text" class="wifi-input" [ngModel]="wifiPairCode()" (ngModelChange)="wifiPairCode.set($event)"
+                                placeholder="6-digit code" inputmode="numeric" maxlength="6" spellcheck="false" />
+                            </div>
+                          </div>
+
+                          <div class="wifi-input-col port-col">
+                            <label class="wifi-label">Pairing Port</label>
+                            <div class="wifi-input-wrap">
+                              <span class="material-symbols-outlined wrap-icon">tag</span>
+                              <input type="text" class="wifi-input" [ngModel]="wifiPairPort()" (ngModelChange)="wifiPairPort.set($event)"
+                                placeholder="37121" spellcheck="false" />
+                            </div>
+                          </div>
+                        </div>
+                        }
                         
                         @if (wifiConnectMessage()) {
                         <div class="wifi-status-alert success">
@@ -1407,6 +1434,7 @@
                     <span class="material-symbols-outlined callout-icon">help_outline</span>
                     <div class="callout-text">
                       Find IP & port in phone <strong>Settings > Developer Options > Wireless Debugging</strong>.
+                      To pair a new device, tap <strong>Pair device with pairing code</strong> there and enter the code and port it shows.
                       </div>
                     </div>
                   </div>

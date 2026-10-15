@@ -433,6 +433,47 @@ class ReadinessEngine:
         logger.info(f"[ReadinessEngine] Connecting to wireless ADB target '{target}'...")
         return await asyncio.to_thread(_connect_sync)
 
+    async def pair_wireless_adb(self, host: str, port: int, code: str) -> dict[str, Any]:
+        """Pair with an Android 11+ device via adb pair before connecting over Wi-Fi."""
+        if not adb_server_connection.current_endpoint().is_local_default:
+            return {
+                "success": False,
+                "message": "Switch to local ADB before pairing a Wireless ADB device.",
+            }
+        clean_host = host.strip()
+        if not clean_host:
+            return {"success": False, "message": "Host IP address cannot be empty"}
+        target = f"{clean_host}:{port}"
+        adb_path = toolchain.resolve("adb") or "adb"
+
+        def _pair_sync():
+            try:
+                res = subprocess.run(
+                    [adb_path, "pair", target, code.strip()],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=15,
+                )
+                output = (res.stdout + "\n" + res.stderr).strip()
+                success = "successfully paired" in output.lower()
+                return {
+                    "success": success,
+                    "target": target,
+                    "output": output,
+                    "message": f"Paired with {target}" if success else output,
+                }
+            except (OSError, subprocess.SubprocessError) as exc:
+                return {
+                    "success": False,
+                    "target": target,
+                    "message": f"Pairing error: {exc}",
+                }
+
+        logger.info(f"[ReadinessEngine] Pairing with wireless ADB target '{target}'...")
+        return await asyncio.to_thread(_pair_sync)
+
 
 # Global singleton instance
 readiness_engine = ReadinessEngine()
