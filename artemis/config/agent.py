@@ -152,6 +152,61 @@ class PlannerValidationConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class DecisionLayerConfig(BaseModel):
+    """System-One decision layer: cheap typed junctions (noul/choice/score)
+    answered by a local decision model (e.g. Laya) instead of a full LLM call.
+
+    Every junction is advisory — a decision-layer miss or low-confidence
+    answer always escalates to the existing model path, never rolls back.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Master switch for the decision layer. Off = identical to upstream behavior.",
+    )
+    url: str = Field(
+        default="http://127.0.0.1:11435/v1/systemone",
+        description=(
+            "Jev/Laya-compatible decision endpoint (POST /v1/systemone). "
+            "`artemis model pull laya` + `artemis model serve laya -p 11435` "
+            "provisions a matching local server."
+        ),
+    )
+    model: str | None = Field(
+        default="typed-decisions",
+        description=(
+            "Checkpoint name sent in the request payload — laya-serve honors "
+            "its own checkpoint names ('typed-decisions', 'english', "
+            "'multilingual')."
+        ),
+    )
+    timeout_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        description="Per-request decision timeout; expiry escalates to the LLM path.",
+    )
+    flash_loop: bool = Field(
+        default=False,
+        description=(
+            "Hybrid Flash loop: the VLM describes the screen (text only, no tool "
+            "calls), the decision model picks the next action from a fixed menu "
+            "built on the live element list. Off → the VLM emits tool calls "
+            "directly (upstream behavior)."
+        ),
+    )
+    flash_choice_threshold: float = Field(
+        default=0.25,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Min top-pick probability (answer_confidence) for a hybrid action-menu "
+            "pick to be acted on. Menus carry ~20 options, so 0.25 is roughly 5x "
+            "uniform; below the floor the turn escalates to the VLM tool path."
+        ),
+    )
+    model_config = {"extra": "allow"}
+
+
 class CommitteeConfig(BaseModel):
     """Configuration specific to Multi-Agent Committee / Council."""
 
@@ -777,6 +832,18 @@ class FlashProfileConfig(BaseModel):
         default_factory=StepSummarizerConfig,
         description="Asynchronous visual context compressor settings.",
     )
+    goal_invariants: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Declarative success conditions for the Flash loop, evaluated by"
+            " artemis.agents.flash.state_predicates against live element state"
+            " (e.g. {id, selector: {resource_id, class, text}, attribute:"
+            " 'checked', expected: false}). All-satisfied suppresses further"
+            " actions and may close the run; any-unsatisfied rejects a"
+            " 'completed' report; unknown defers to the final check. Declare"
+            " only conditions that jointly define task success."
+        ),
+    )
     model_config = {"extra": "allow"}
 
 
@@ -879,6 +946,10 @@ class AgentGlobalConfig(BaseModel):
             ' {"validator": "ultra"}). Empty by default so that'
             " ``explorer.flash_mode`` / ``explorer.pro_mode`` decide."
         ),
+    )
+    decision: DecisionLayerConfig = Field(
+        default_factory=DecisionLayerConfig,
+        description="System-One decision layer (Laya/Jev) offloading cheap typed junctions.",
     )
     planner_validation: PlannerValidationConfig = Field(
         default_factory=PlannerValidationConfig,

@@ -20,10 +20,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from google.genai import types
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from PIL import Image
 import pytest
 
 from artemis.agents.explorer.explorer import Explorer
 from artemis.agents.explorer.tiers import EXPLORER_TIERS, PERCEPTION_TOOLS, get_tier
+from artemis.agents.explorer.universal_runner import UniversalRunnerMixin
 from artemis.config import settings
 from artemis.context import ArtemisContext
 from artemis.graph.state import State
@@ -244,11 +246,11 @@ async def test_universal_dispatch_appends_image_message(tmp_path):
     assert [type(m) for m in messages] == [ToolMessage, ToolMessage, HumanMessage]
     assert messages[0].content == "perception text"
     human = messages[2]
-    assert human.content[0] == {
+    assert human.content[-1] == {
         "type": "text",
         "text": "[Annotated image(s) returned by: ask_perception_tool, inspect_region]",
     }
-    image_blocks = human.content[1:]
+    image_blocks = human.content[:-1]
     assert len(image_blocks) == 2  # the missing file is skipped
     assert all(b["type"] == "image_url" for b in image_blocks)
     assert image_blocks[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
@@ -555,3 +557,21 @@ def test_get_tier_normalizes_or_falls_back(version):
     normalized = str(version or "").strip().lower()
     expected = normalized if normalized in EXPLORER_TIERS else "flash"
     assert tier.name == expected
+
+
+def test_universal_initial_messages_single_image_before_text(tmp_path):
+    """Initial universal prompt carries the screenshot once, before the request text."""
+    path = tmp_path / "screen.png"
+    Image.new("RGB", (8, 8), (255, 255, 255)).save(path)
+    messages = UniversalRunnerMixin()._build_universal_messages(
+        query="target",
+        context_feedback="feedback",
+        screenshot_path=str(path),
+        minimal_list="[1] item",
+        prompt_template="system",
+    )
+    content = messages[1].content
+    assert [block["type"] for block in content] == ["image_url", "text"]
+    assert content[0]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert "Query: target" in content[1]["text"]
+    assert "[1] item" in content[1]["text"]

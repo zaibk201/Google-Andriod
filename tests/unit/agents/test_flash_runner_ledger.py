@@ -192,9 +192,13 @@ def test_observation_tail_has_pro_shape(mock_context):
         tail = runner._build_tail(ledger, 1, b"IMG", "[1] Settings")
         texts = [b["text"] for b in tail.content if b["type"] == "text"]
         assert OBSERVATION_HEADER_RE.match(texts[0])
-        assert texts[1] == "--- Current Screenshot ---"
-        assert texts[2] == f"{PRO_UI_LIST_MARKER}\n[1] Settings"
+        assert texts[1] == f"{PRO_UI_LIST_MARKER}\n[1] Settings"
+        assert texts[2] == "--- Current Screenshot ---"
         assert len(texts) == 3
+        # The screenshot is the final block: intermediate-image pruning then
+        # removes a trailing span and the surviving text prefix stays
+        # byte-identical across turns for prefix-cache reuse.
+        assert tail.content[-1]["type"] == "image_url"
         assert sum(1 for b in tail.content if b["type"] == "image_url") == 1
         joined = "".join(texts)
         assert "Open Settings" not in joined and "objective" not in joined.lower()
@@ -242,16 +246,18 @@ def test_per_turn_notices_are_marked_ephemeral(mock_context):
         previous_turn_silent=True,
     )
     texts = [b.get("text") for b in tail.content]
-    # header, screenshot label, image, UI list, then the per-turn notices with
-    # the persistent instruction body right after its wrapper
-    assert texts[4:] == [
+    # header, UI list, then the per-turn notices with the persistent
+    # instruction body right after its wrapper; screenshot label + image close
+    # the message (image last so pruning removes a trailing span).
+    assert texts[2:7] == [
         "nudge",
         guidance.wrapper,
         guidance.body,
         _FINAL_TURN_WARNING,
         REASONING_REMINDER,
     ]
-    assert tail.additional_kwargs[EPHEMERAL_BLOCKS_KEY] == [4, 5, 7, 8]
+    assert texts[7] == "--- Current Screenshot ---" and texts[8] is None
+    assert tail.additional_kwargs[EPHEMERAL_BLOCKS_KEY] == [2, 3, 5, 6]
 
 
 def test_injected_instruction_body_outlives_its_wrapper(mock_context):
@@ -472,8 +478,8 @@ async def test_run_builds_prompt_from_ledger_with_session_offsets(mock_context):
     images = [b for b in tail2.content if b["type"] == "image_url"]
     assert len(images) == 1
     assert images[0]["image_url"]["url"].endswith(base64.b64encode(b"IMG-tc2").decode())
-    assert tail2_texts[1] == "--- Current Screenshot ---"
-    assert tail2_texts[2] == f"{PRO_UI_LIST_MARKER}\n[1] next"
+    assert tail2_texts[1] == f"{PRO_UI_LIST_MARKER}\n[1] next"
+    assert tail2_texts[2] == "--- Current Screenshot ---"
     assert len(turn2_messages) == 6
 
     # Both actions of the multi-action turn were registered on the committed turn.
@@ -684,3 +690,195 @@ def test_turn_record_reports_the_first_failure_of_a_multi_action_turn():
         ]
     )
     assert record.result()["error"] == "click rejected: coordinates out of bounds"
+
+
+# ---------------------------------------------------------------------------
+# Terminal-boundary completion verification (Pro final check at report time)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rejected_completion_feeds_verdicts_back_and_the_run_continues(mock_context):
+    """A 'completed' report the final check rejects must not end the run:
+    the tool call is answered with a rejection carrying the failed verdicts,
+    and the next turn still runs — here the agent then fails honestly."""
+    responses = [_report(explanation="dark theme on"), _report(status="failed", explanation="cannot")]
+    with (
+        patch("artemis.controllers.unified_controller.get_driver"),
+        patch(
+            "artemis.agents.flash.runner.capture_screenshot_and_parse_ui",
+            AsyncMock(return_value=_INITIAL_OBSERVATION),
+        ),
+    ):
+        runner = _make_runner(mock_context, responses, max_turns=0)
+        runner._verify_completion = AsyncMock(
+            return_value=(False, "[verify failed] 'dark theme enabled': ui_night_mode=1")
+        )
+        result = await runner.run(State(initial_goal="Enable dark theme"))
+
+    assert result == {"status": "failed", "explanation": "cannot"}
+    assert runner._completion_rejections == 1
+    # The rejected tool call got an answering ToolMessage with the verdicts.
+    turn2_messages = runner.calls[1]["messages"]
+    rejection = next(
+        m for m in turn2_messages if isinstance(m, ToolMessage) and "rejected" in str(m.content)
+    )
+    assert "ui_night_mode=1" in rejection.content
+    assert rejection.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_completion_blocked_outcome_when_verify_budget_is_exhausted(mock_context):
+    """Once the retry budget is spent the report is finalized as failed —
+    narration cannot outvote the checker's ground truth forever."""
+    responses = [_report(explanation="dark theme on")]
+    with (
+        patch("artemis.controllers.unified_controller.get_driver"),
+        patch(
+            "artemis.agents.flash.runner.capture_screenshot_and_parse_ui",
+            AsyncMock(return_value=_INITIAL_OBSERVATION),
+        ),
+    ):
+        runner = _make_runner(mock_context, responses, max_turns=0)
+        runner._completion_rejections = 3  # == default final_check_max_attempts
+        runner._verify_completion = AsyncMock(return_value=(False, "goal unmet"))
+        result = await runner.run(State(initial_goal="Enable dark theme"))
+
+    assert result["status"] == "failed"
+    assert "blocked" in result["explanation"].lower()
+    assert "goal unmet" in result["explanation"]
+
+
+@pytest.mark.asyncio
+async def test_failed_status_skips_completion_verification(mock_context):
+    """Only 'completed' claims are audited; reporting failure is honest already."""
+    responses = [_report(status="failed", explanation="device offline")]
+    with (
+        patch("artemis.controllers.unified_controller.get_driver"),
+        patch(
+            "artemis.agents.flash.runner.capture_screenshot_and_parse_ui",
+            AsyncMock(return_value=_INITIAL_OBSERVATION),
+        ),
+    ):
+        runner = _make_runner(mock_context, responses, max_turns=0)
+        runner._verify_completion = AsyncMock(return_value=(True, ""))
+        result = await runner.run(State(initial_goal="Enable dark theme"))
+
+    assert result["status"] == "failed"
+    runner._verify_completion.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_verbatim_dead_call_set_is_suppressed_not_reexecuted(mock_context):
+    """An identical call set that already changed nothing must not be
+    executed a second time — the tool call is answered with an error and a
+    navigation hint instead of burning a real tap."""
+    dead_call = {
+        "name": "click",
+        "args": {"target": [897, 390], "target_description": "Dark theme"},
+        "id": "tc-a",
+    }
+    repeat_call = dict(dead_call, id="tc-b")
+    responses = [
+        AIMessage(content="tap", tool_calls=[dead_call]),
+        AIMessage(content="tap again", tool_calls=[repeat_call]),
+        _report(status="failed", explanation="gave up"),
+    ]
+    with (
+        patch("artemis.controllers.unified_controller.get_driver"),
+        patch(
+            "artemis.agents.flash.runner.capture_screenshot_and_parse_ui",
+            AsyncMock(return_value=_INITIAL_OBSERVATION),
+        ),
+    ):
+        runner = _make_runner(mock_context, responses, max_turns=0)
+        result = await runner.run(State(initial_goal="Enable dark theme"))
+
+    assert result["status"] == "failed"
+    # Only ONE real click executed; the verbatim repeat was suppressed.
+    executed = [c for c in runner.executor.execute.await_args_list]
+    assert len(executed) == 1
+    # The suppressed call got an error ToolMessage in the next turn's prompt.
+    turn3_messages = runner.calls[2]["messages"]
+    err = next(
+        m
+        for m in turn3_messages
+        if isinstance(m, ToolMessage) and "was already executed" in str(m.content)
+    )
+    assert err.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_ping_pong_cycle_triggers_alternation_notice(mock_context):
+    """click → BACK → same click is an A,B,A cycle: screens change every
+    turn so verbatim suppression cannot see it, but the turn-3 re-issue of
+    the turn-1 call on a matching screen must raise the alternation
+    notice."""
+    home = [{"index": 1, "text": "home", "center": (100, 100)}]
+    wifi = [{"index": 1, "text": "wifi page", "center": (200, 200)}]
+
+    def _exec(name, args, tc_id, state, **_):
+        if state is not None:
+            state.indexed_elements = list(
+                wifi if name == "click" else home
+            )
+        return _exec_result(tc_id, name, f"IMG-{tc_id}".encode())
+
+    enter = {"name": "click", "args": {"target": 11}, "id": "c1"}
+    back = {"name": "press_key", "args": {"key": "BACK"}, "id": "b1"}
+    reenter = {"name": "click", "args": {"target": 11}, "id": "c2"}
+    responses = [
+        AIMessage(content="enter", tool_calls=[enter]),
+        AIMessage(content="back", tool_calls=[back]),
+        AIMessage(content="enter again", tool_calls=[reenter]),
+        _report(status="failed", explanation="loop"),
+    ]
+    with (
+        patch("artemis.controllers.unified_controller.get_driver"),
+        patch(
+            "artemis.agents.flash.runner.capture_screenshot_and_parse_ui",
+            AsyncMock(return_value=_INITIAL_OBSERVATION),
+        ),
+    ):
+        runner = _make_runner(mock_context, responses, max_turns=0)
+        runner.executor.execute = AsyncMock(side_effect=_exec)
+        state = State(initial_goal="Check Wi-Fi state")
+        state.indexed_elements = list(home)
+        await runner.run(state)
+
+    turn4_messages = runner.calls[3]["messages"]
+    assert any(
+        "alternating between two screens" in str(m.content)
+        for m in turn4_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_repeated_suppressed_calls_fail_after_streak(mock_context):
+    """Suppression prevents re-execution, not repetition — a model that
+    re-issues the same dead call a third time is stuck; end honestly
+    instead of burning the turn budget."""
+    def _call(i):
+        return {
+            "name": "click",
+            "args": {"target": 12},
+            "id": f"tc-{i}",
+        }
+    responses = [
+        AIMessage(content="t", tool_calls=[_call(i)]) for i in range(5)
+    ]
+    with (
+        patch("artemis.controllers.unified_controller.get_driver"),
+        patch(
+            "artemis.agents.flash.runner.capture_screenshot_and_parse_ui",
+            AsyncMock(return_value=_INITIAL_OBSERVATION),
+        ),
+    ):
+        runner = _make_runner(mock_context, responses, max_turns=0)
+        result = await runner.run(State(initial_goal="Toggle a switch"))
+
+    assert result["status"] == "failed"
+    assert "suppressed" in result["explanation"]
+    # First call executed once; calls 2 and 3 were suppressed; streak 3
+    # ended the run before calls 4-5 were ever consumed.
+    assert runner.executor.execute.await_count == 1
