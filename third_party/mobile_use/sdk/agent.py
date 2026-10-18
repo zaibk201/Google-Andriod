@@ -23,6 +23,7 @@ environment preparation, cancellation watching and UI hierarchy backend reportin
 """
 
 import asyncio
+import json
 import os
 
 try:
@@ -67,6 +68,7 @@ from artemis.graph.graph import get_graph
 from artemis.graph.state import State
 from artemis.runtime import DeviceExecutionLock
 from artemis.sdk.run_outcome import attach_test_summary, resolve_trace_suffix
+from artemis.utils.notes import save_note_content
 from artemis.sdk.types.agent import AgentConfig
 from artemis.utils.startup_progress import publish_startup_progress
 from third_party.mobile_use.controllers.platform_specific_commands_controller import (
@@ -945,8 +947,9 @@ class AgentBase:
         state: State,
     ) -> str | dict | TOutput | None:
         exec_setup = getattr(ctx, "execution_setup", None)
+        agent_config = getattr(ctx, "agent_config", None)
         outputter_cfg = getattr(exec_setup, "outputter", None) or (
-            getattr(ctx.agent_config, "outputter", None) if ctx and ctx.agent_config else None
+            getattr(agent_config, "outputter", None) if agent_config else None
         )
         outputter_enabled = getattr(outputter_cfg, "enabled", True) if outputter_cfg else True
         force_synthesis = (
@@ -974,6 +977,18 @@ class AgentBase:
                     output_config=output_config or OutputConfig(),
                     graph_output=state,
                 )
+                if ctx.data_engine and structured_output is not None:
+                    report = (
+                        structured_output
+                        if isinstance(structured_output, str)
+                        else "```json\n"
+                        + json.dumps(structured_output, ensure_ascii=False, indent=2)
+                        + "\n```"
+                    )
+                    try:
+                        save_note_content(ctx.data_engine.base_dir, "output", report)
+                    except OSError as exc:
+                        logger.warning(f"[{task_name}] Failed to save Task Report: {exc}")
                 logger.info(f"[{task_name}] Structured output: {structured_output}")
                 record_events(
                     output_path=request.llm_output_path,
