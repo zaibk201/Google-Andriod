@@ -457,7 +457,7 @@ if ((-not (Test-Path $ShowcaseIndex)) -and (-not (Test-Path $ShowcaseIndexAlt1))
 # 7. Optionally configure MCP for detected AI IDEs
 Write-Host ""
 Write-Host "   [INFO] Would you like to configure ARTEMIS MCP & testing rules for your AI IDEs?" -ForegroundColor Cyan
-Write-Host "      (Supported: Antigravity, Cursor, Claude Code/Desktop, Codex, OpenClaw, Windsurf)"
+Write-Host "      (Supported: Antigravity, Cursor, Claude Code/Desktop, Codex, OpenClaw, Windsurf, OpenCode)"
 $installMcp = "Y"
 if ([Console]::IsInputRedirected -eq $false) {
     $response = Read-Host "      Install MCP configuration & rules now? [Y/n]"

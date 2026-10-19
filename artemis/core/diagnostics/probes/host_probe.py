@@ -17,7 +17,7 @@
 The standard readiness probes answer "can Artemis drive a phone on this
 machine?". This probe answers the question that precedes it when Artemis is
 embedded in an AI coding assistant (Claude Code, Cursor, Codex, Antigravity,
-...): "was the server launched the way the installer expects, and can it
+OpenCode, ...): "was the server launched the way the installer expects, and can it
 spawn a background runner?". The failure modes it covers are the ones users
 hit mostly through MCP, rarely from the CLI or the web console:
 
@@ -73,6 +73,7 @@ MCP_CLIENT_NAMES: tuple[str, ...] = (
     "roo",
     "openclaw",
     "codex",
+    "opencode",
 )
 
 
@@ -89,6 +90,13 @@ def detect_mcp_client() -> str | None:
     before the generic VS Code markers because Cursor, Windsurf, Cline and Roo
     are (or run inside) VS Code and inherit ``VSCODE_*`` / ``TERM_PROGRAM``.
     """
+    # The installer writes ARTEMIS_MCP_CLIENT into the server's env block for
+    # hosts that do not leak an identifying variable of their own (OpenCode
+    # marks its shell tool but not MCP children). An explicit declaration beats
+    # every inference below, so it is honored first.
+    declared = os.environ.get("ARTEMIS_MCP_CLIENT", "").strip().lower()
+    if declared in MCP_CLIENT_NAMES:
+        return declared
     # Antigravity injects its language-server endpoint and CSRF token
     # (ANTIGRAVITY_LS_ADDRESS / ANTIGRAVITY_CSRF_TOKEN) so child processes can
     # call `agentapi`; mcp_server/notifiers/agentapi.py relies on the same pair.
@@ -122,6 +130,18 @@ def detect_mcp_client() -> str | None:
         return "cline"
     if _env_has_prefix("ROO_"):
         return "roo"
+    # OpenCode stamps its shell tool with OPENCODE=1, AI_AGENT=opencode and a
+    # session id. It does not export those to MCP children, so the installed
+    # config supplies ARTEMIS_MCP_CLIENT instead (handled above); these remain
+    # as a fallback for a server reached through that shell. OPENCODE_* config
+    # variables are deliberately not matched: users set OPENCODE_CONFIG_DIR /
+    # OPENCODE_API_KEY by hand, so on their own they prove nothing.
+    if (
+        os.environ.get("OPENCODE") == "1"
+        or os.environ.get("AI_AGENT") == "opencode"
+        or "OPENCODE_SESSION_ID" in os.environ
+    ):
+        return "opencode"
     # Plain VS Code (Copilot agent mode) exports VSCODE_PID / VSCODE_IPC_HOOK
     # and sets TERM_PROGRAM=vscode. Weakest signal, so it is checked last.
     if (

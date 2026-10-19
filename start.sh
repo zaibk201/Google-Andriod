@@ -370,7 +370,7 @@ fi
 # 7. Optionally configure MCP for detected AI IDEs
 echo ""
 echo -e "   ${CYAN}🔌 Would you like to configure ARTEMIS MCP & testing rules for your AI IDEs?${NC}"
-echo -e "      (Supported: Antigravity, Cursor, Claude Code/Desktop, Codex, OpenClaw, Windsurf)"
+echo -e "      (Supported: Antigravity, Cursor, Claude Code/Desktop, Codex, OpenClaw, Windsurf, OpenCode)"
 if [ -t 0 ]; then
     read -r -p "      Install MCP configuration & rules now? [Y/n]: " INSTALL_MCP
     INSTALL_MCP=${INSTALL_MCP:-Y}

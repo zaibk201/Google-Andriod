@@ -38,8 +38,9 @@ _SIGNAL_PREFIXES = (
     "CLINE_",
     "ROO_",
     "VSCODE_",
+    "OPENCODE_",
 )
-_SIGNAL_KEYS = ("CLAUDECODE", "TERM_PROGRAM")
+_SIGNAL_KEYS = ("CLAUDECODE", "TERM_PROGRAM", "OPENCODE", "AI_AGENT", "ARTEMIS_MCP_CLIENT")
 
 
 @pytest.fixture
@@ -220,6 +221,11 @@ def test_detect_mcp_client_unknown_in_clean_environment(clean_ide_env):
         ({"OPENCLAW_SESSION_ID": "s"}, "openclaw"),
         ({"CLINE_TASK_ID": "1"}, "cline"),
         ({"ROO_CODE_TASK": "1"}, "roo"),
+        ({"OPENCODE": "1"}, "opencode"),
+        ({"OPENCODE_SESSION_ID": "ses_abc"}, "opencode"),
+        ({"AI_AGENT": "opencode"}, "opencode"),
+        # The installer-declared marker wins over every inference.
+        ({"ARTEMIS_MCP_CLIENT": "opencode"}, "opencode"),
         ({"VSCODE_PID": "42"}, "vscode"),
         ({"TERM_PROGRAM": "vscode"}, "vscode"),
     ],
@@ -235,7 +241,10 @@ def test_detect_mcp_client_signals(clean_ide_env, variables, expected):
     [
         {"CODEX_HOME": "/home/me/.codex"},  # user relocated the Codex config dir
         {"OPENCLAW_WEBHOOK_URL": "https://hooks.example/x"},  # notifier setting, any host
+        {"OPENCODE_CONFIG_DIR": "/home/me/.config/opencode"},  # user-set, proves nothing
+        {"OPENCODE_API_KEY": "sk-not-a-host"},  # provider key, user-set anywhere
         {"TERM_PROGRAM": "iTerm.app"},
+        {"ARTEMIS_MCP_CLIENT": "not-a-real-client"},  # unknown value is ignored
     ],
 )
 def test_detect_mcp_client_ignores_weak_or_user_set_variables(clean_ide_env, variables):
@@ -257,6 +266,8 @@ def test_detect_mcp_client_ignores_weak_or_user_set_variables(clean_ide_env, var
         ({"CURSOR_TRACE_ID": "x", "VSCODE_PID": "1", "TERM_PROGRAM": "vscode"}, "cursor"),
         ({"WINDSURF_SESSION": "x", "TERM_PROGRAM": "vscode"}, "windsurf"),
         ({"CLINE_TASK_ID": "1", "VSCODE_PID": "1"}, "cline"),
+        # OpenCode can run inside a VS Code terminal too.
+        ({"OPENCODE_SESSION_ID": "s", "VSCODE_PID": "1", "TERM_PROGRAM": "vscode"}, "opencode"),
     ],
 )
 def test_detect_mcp_client_specific_host_beats_generic_vscode(clean_ide_env, variables, expected):
@@ -272,8 +283,9 @@ def test_mcp_install_actions_shapes():
 
     (hint,) = host_probe.mcp_install_actions(None)
     assert hint.action_type == "hint"
-    assert "antigravity, claude, cursor, windsurf, vscode, cline, roo, openclaw, codex" in (
-        hint.payload
+    assert (
+        "antigravity, claude, cursor, windsurf, vscode, cline, roo, openclaw, codex, opencode"
+        in (hint.payload)
     )
 
 

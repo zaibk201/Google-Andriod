@@ -1,6 +1,6 @@
 # 🔌 Universal MCP Server for ARTEMIS
 
-This directory contains the **Model Context Protocol (MCP)** server for **ARTEMIS**. It exposes mobile device automation to clients such as **Antigravity**, **Cursor**, **Claude Code**, **OpenClaw**, and **Windsurf**.
+This directory contains the **Model Context Protocol (MCP)** server for **ARTEMIS**. It exposes mobile device automation to clients such as **Antigravity**, **Cursor**, **Claude Code**, **OpenClaw**, **Windsurf**, and **OpenCode**.
 
 ## 🏗️ Architecture
 
@@ -42,14 +42,14 @@ When you start an asynchronous mobile test via `mobile_run_task`, Artemis MCP ru
 | Platform / Environment | Primary Notification Mechanism | How It Works & Configuration |
 | :--- | :--- | :--- |
 | **Antigravity / Jetski** | **Reactive Wakeup (`AgentApiNotifier`)** | Automatically detects and caches the active IDE session credentials (`ANTIGRAVITY_LS_ADDRESS`, `ANTIGRAVITY_CSRF_TOKEN`), sorting candidate processes by creation time to avoid stale PIDs, and calls `agentapi send-message` to wake up the agent directly in the conversation. |
-| **Cursor / Windsurf / VS Code / Cline / Roo Code** | **Native Desktop Toast (`DesktopNotifier`) + File Audit (`FileNotifier`)** | Enabled **by default** across macOS (`osascript`), Linux (`notify-send`), and Windows (`powershell`). Pops up a system notification banner informing the developer whether the task completed or failed. The AI agent inspects `<trace_dir>/status.json` or uses `mobile_manage_task(action="status")`. Can be silenced via `ARTEMIS_DESKTOP_NOTIFY=false`. |
+| **Cursor / Windsurf / VS Code / Cline / Roo Code / OpenCode** | **Native Desktop Toast (`DesktopNotifier`) + File Audit (`FileNotifier`)** | Enabled **by default** across macOS (`osascript`), Linux (`notify-send`), and Windows (`powershell`). Pops up a system notification banner informing the developer whether the task completed or failed. The AI agent inspects `<trace_dir>/status.json` or uses `mobile_manage_task(action="status")`. Can be silenced via `ARTEMIS_DESKTOP_NOTIFY=false`. |
 | **Claude Code / Desktop** | **Native Desktop Toast + File Audit** | Alerts the user via system desktop notification banner when background execution concludes, while maintaining a complete JSONL audit log in `notifications.jsonl`. |
 | **OpenClaw / Slack / Discord / CI/CD** | **HTTP Webhook (`WebhookNotifier`)** | Sends structured JSON POST payloads to custom endpoints configured via `OPENCLAW_WEBHOOK_URL`, `MCP_NOTIFICATION_WEBHOOK`, or `ARTEMIS_WEBHOOK_URL`. |
 | **Universal Custom IDE / CLI Hooks** | **Custom Script Hook (`ScriptNotifier`)** | Set `ARTEMIS_NOTIFY_CMD="my-script --title '{title}' --message '{message}' --trace-id '{trace_id}'"` in your environment to execute any custom command or script upon event completion. |
 
 ## 🧠 AI Agent Behavioral Rules (`rules.md`)
 
-When connecting ARTEMIS to AI coding assistants like **Antigravity**, **Claude Code**, **Cursor**, or **Windsurf**, providing the assistant with domain-specific testing discipline is critical for generating reliable test code.
+When connecting ARTEMIS to AI coding assistants like **Antigravity**, **Claude Code**, **Cursor**, **Windsurf**, or **OpenCode**, providing the assistant with domain-specific testing discipline is critical for generating reliable test code.
 
 The included [`rules.md`](./rules.md) file contains the **Mobile Testing Mindset (ARTEMIS Integration)** guideline. It teaches the AI agent how to properly collaborate with ARTEMIS:
 
@@ -68,6 +68,7 @@ When you run `uv run artemis mcp --install all` (or target a specific IDE like `
 * **VS Code**: Automatically installs global rules to `~/.vscode/rules/artemis.md`.
 * **Cline / Roo Code**: Automatically installs global rules to `~/.cline/rules/artemis.md` and `~/.roo/rules/artemis.md`.
 * **OpenClaw**: Automatically installs global rules to `~/.openclaw/rules/artemis.md`.
+* **OpenCode**: Automatically injects global rules into `~/.config/opencode/AGENTS.md` (its single global rules file; `OPENCODE_CONFIG_DIR` / `XDG_CONFIG_HOME` are honored).
 
 *(Note: If you prefer manual configuration, you can also copy the contents of [`rules.md`](./rules.md) into your IDE's system prompt or global rules settings.)*
 

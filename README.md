@@ -35,7 +35,7 @@
 
 * **Cross-App Automation**: Executes testing workflows and everyday tasks on Android from natural language instructions.
 * **Multimodal Targeting**: Uses element indices when available, with coordinate and visual locating fallbacks for custom interfaces.
-* **IDE Diagnostics**: **Model Context Protocol (MCP)** integration lets **Antigravity, Claude Code, and Windsurf** drive test devices and collect **Logcat** output and screenshots.
+* **IDE Diagnostics**: **Model Context Protocol (MCP)** integration lets **Antigravity, Claude Code, Windsurf, and OpenCode** drive test devices and collect **Logcat** output and screenshots.
 * **Flash Execution**: A reactive observe-and-act loop with asynchronous history summaries, typically **3–5s per step**.
 * **Pro Exploration**: Checks targets before individual actions and returns blocked actions to the Operator for recovery. Supports long-running exploratory and stability tests.
 * **AndroidWorld Results**: **99%+ task completion** on Google Research's **AndroidWorld** benchmark (100+ multi-step tasks).
@@ -77,7 +77,7 @@
 
 Ensure an Android device (with **USB Debugging** enabled) or emulator is connected. The one-click startup script will automatically:
 - **Install System Toolchains**: Detect and auto-install ADB, scrcpy, FFmpeg, and Python (`uv`) dependencies.
-- **Mount Global MCP Server & AI Agent Rules**: Prompt to automatically install global MCP configurations and the **Artemis Mobile Testing Mindset (`rules.md`)** into your AI IDEs (**Antigravity**, **Cursor**, **Claude Code**, **Codex**, **Windsurf**, **VS Code**, **Cline/Roo**, **OpenClaw**).
+- **Mount Global MCP Server & AI Agent Rules**: Prompt to automatically install global MCP configurations and the **Artemis Mobile Testing Mindset (`rules.md`)** into your AI IDEs (**Antigravity**, **Cursor**, **Claude Code**, **Codex**, **Windsurf**, **VS Code**, **Cline/Roo**, **OpenClaw**, **OpenCode**).
 
 ### macOS and Linux
 
@@ -107,7 +107,7 @@ cd artemis
 <a id="mcp-setup"></a>
 <a id="mcp"></a>
 <details>
-<summary><b>MCP Setup for Codex / Antigravity / Claude Code / Windsurf (Click to expand)</b></summary>
+<summary><b>MCP Setup for Codex / Antigravity / Claude Code / Windsurf / OpenCode (Click to expand)</b></summary>
 
 <br>
 
@@ -180,6 +180,27 @@ PYTHONPATH = "/path/to/artemis"
 }
 ```
 
+* **OpenCode** (`~/.config/opencode/opencode.json`):
+```json
+{
+  "mcp": {
+    "artemis": {
+      "type": "local",
+      "command": ["/path/to/artemis/.venv/bin/python", "-m", "mcp_server"],
+      "cwd": "/path/to/artemis",
+      "environment": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "/path/to/artemis",
+        "ARTEMIS_MCP_CLIENT": "opencode"
+      },
+      "enabled": true,
+      "timeout": 120000
+    }
+  }
+}
+```
+> OpenCode reads `command` as one argv array, names its env block `environment`, and defaults the tool-fetch timeout to 5s; the installer raises it to 120s for ARTEMIS's first-run startup.
+
 ### 3. Mount Behavioral Rules for AI Agents (Highly Recommended)
 
 To ensure your AI coding assistant acts with the rigor of a senior mobile test engineer and never hallucinates UI interactions, we provide a dedicated testing mindset rules file at [`mcp_server/rules.md`](./mcp_server/rules.md) (covering **Active Exploration before coding**, **Flash vs. Pro routing strategy**, **Latency & Timing compensation**, and the **"Dynamic-First, Coordinate-Fallback" locator pattern**).
@@ -189,6 +210,7 @@ You can mount or copy [`mcp_server/rules.md`](./mcp_server/rules.md) into your A
 * **Claude Code**: Run `artemis mcp --install claude` to install the rules to `~/.claude/rules/artemis.md` (install to exactly one location — Claude Code loads both `~/.claude/CLAUDE.md` and `~/.claude/rules/*.md`, so duplicating the rules wastes context).
 * **Cursor**: Copy the contents into `.cursorrules` or create a rule file at `.cursor/rules/artemis.mdc`.
 * **Codex**: Add the contents to `~/.codex/AGENTS.md` (or the active `AGENTS.override.md`).
+* **OpenCode**: Run `artemis mcp --install opencode` to inject the rules into `~/.config/opencode/AGENTS.md` (OpenCode loads that one global file, so no separate rules directory is used).
 * **Windsurf / OpenClaw**: Add the rules to your workspace rules or global system prompts.
 
 > For more details on the testing mindset and MCP architecture, see the [MCP Server README](./mcp_server/README.md).
@@ -247,7 +269,7 @@ if __name__ == "__main__":
 </p>
 
 * **Web Visual Test Console (`uv run artemis ui`)**: Real-time screen projection and interactive panel, supporting natural language test dispatch, live reasoning telemetry, action trajectories, and execution replay; manage server lifecycle anytime from any terminal using `uv run artemis restart`, `uv run artemis stop`, and `uv run artemis status`;
-* **MCP Server**: Connects **Antigravity, Claude Code, Windsurf**, and other MCP clients to real devices for bug reproduction and test execution;
+* **MCP Server**: Connects **Antigravity, Claude Code, Windsurf, OpenCode**, and other MCP clients to real devices for bug reproduction and test execution;
 * **Developer CLI (`uv run artemis run`)**: Direct terminal execution for automated test cases, exploratory stability inspection, or AndroidWorld benchmarks with high-fidelity structured terminal output;
 * **Python SDK**: Integrates as a standard Python library into existing automated testing frameworks (e.g., pytest) or CI/CD pipelines with strongly typed Pydantic structured outputs and assertion support.
 

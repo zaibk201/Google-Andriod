@@ -35,7 +35,7 @@
 
 * **跨 App 自动化**：根据自然语言指令，在 Android 上执行测试流程和日常任务。
 * **多模态定位**：优先使用元素索引，对自绘界面提供坐标和视觉定位兜底。
-* **IDE 内诊断**：通过 **MCP 协议**，让 **Antigravity、Claude Code、Windsurf** 操作测试设备，收集 **Logcat** 输出和截图。
+* **IDE 内诊断**：通过 **MCP 协议**，让 **Antigravity、Claude Code、Windsurf、OpenCode** 操作测试设备，收集 **Logcat** 输出和截图。
 * **Flash 执行**：使用观察、执行循环和异步历史摘要，单步通常约 **3–5 秒**。
 * **Pro 探索**：单个动作执行前校验目标，被拦截的动作交回 Operator 处理。支持长时间探索和稳定性测试。
 * **AndroidWorld 结果**：在 Google Research **AndroidWorld** 基准评测（100+ 多步任务）中取得 **99%+ 任务完成率**。
@@ -79,7 +79,7 @@
 
 确保电脑已连接 Android 实体机（已开启 **USB 调试**）或 Android 模拟器。一键启动脚本将会自动完成以下配置：
 - **安装系统环境依赖**：自动检测并安装 ADB、scrcpy、FFmpeg 与 Python（`uv`）运行时及项目依赖。
-- **全局挂载 MCP 服务与测试准则 (Rules)**：主动引导并自动将全局 MCP 服务与 **Artemis 移动端测试思维准则 (`rules.md`)** 挂载至你使用的 AI IDE（支持 **Antigravity**、**Cursor**、**Claude Code**、**Codex**、**Windsurf**、**VS Code**、**Cline/Roo**、**OpenClaw**）。
+- **全局挂载 MCP 服务与测试准则 (Rules)**：主动引导并自动将全局 MCP 服务与 **Artemis 移动端测试思维准则 (`rules.md`)** 挂载至你使用的 AI IDE（支持 **Antigravity**、**Cursor**、**Claude Code**、**Codex**、**Windsurf**、**VS Code**、**Cline/Roo**、**OpenClaw**、**OpenCode**）。
 
 ### macOS 与 Linux
 
@@ -109,7 +109,7 @@ cd artemis
 <a id="mcp-setup"></a>
 <a id="mcp"></a>
 <details>
-<summary><b>Codex / Antigravity / Claude Code / Windsurf MCP 配置（点击展开）</b></summary>
+<summary><b>Codex / Antigravity / Claude Code / Windsurf / OpenCode MCP 配置（点击展开）</b></summary>
 
 <br>
 
@@ -182,6 +182,27 @@ PYTHONPATH = "/path/to/artemis"
 }
 ```
 
+* **OpenCode**（`~/.config/opencode/opencode.json`）：
+```json
+{
+  "mcp": {
+    "artemis": {
+      "type": "local",
+      "command": ["/path/to/artemis/.venv/bin/python", "-m", "mcp_server"],
+      "cwd": "/path/to/artemis",
+      "environment": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "/path/to/artemis",
+        "ARTEMIS_MCP_CLIENT": "opencode"
+      },
+      "enabled": true,
+      "timeout": 120000
+    }
+  }
+}
+```
+> OpenCode 的 `command` 为完整参数数组，环境变量块名为 `environment`，且工具拉取超时默认为 5 秒；安装器会将其提升至 120 秒以适配 ARTEMIS 首次启动。
+
 ### 3. 挂载智能体行为规范 Rules（强烈推荐）
 
 为使 AI 编程助手具备资深移动端测试工程师的严谨思维，避免凭空臆测 UI 交互，我们提供了专属的测试思维行为规范文件 [`mcp_server/rules.md`](./mcp_server/rules.md)（涵盖**可运行代码原则与真机探索**、**Flash 与 Pro 任务路由策略**、**延迟与时间补偿机制**以及**“动态优先、坐标兜底”定位模式**）。
@@ -191,6 +212,7 @@ PYTHONPATH = "/path/to/artemis"
 * **Claude Code**：运行 `artemis mcp --install claude` 自动安装规则至 `~/.claude/rules/artemis.md`（只安装到单一位置——Claude Code 会同时加载 `~/.claude/CLAUDE.md` 与 `~/.claude/rules/*.md`，重复安装会浪费上下文）。
 * **Cursor**：将内容复制到 `.cursorrules` 文件或在 `.cursor/rules/artemis.mdc` 中创建新规则。
 * **Codex**：将内容添加至 `~/.codex/AGENTS.md`（或当前生效的 `AGENTS.override.md`）。
+* **OpenCode**：运行 `artemis mcp --install opencode` 将准则注入 `~/.config/opencode/AGENTS.md`（OpenCode 只加载这一个全局文件，不使用独立的 rules 目录）。
 * **Windsurf / OpenClaw**：将内容添加到工作区规则或全局 System Prompt 中。
 
 > 更多规范设计细节与 MCP 架构说明，请参阅 [MCP Server 文档](./mcp_server/README.md)。

@@ -213,6 +213,7 @@ def test_cli_mcp_generate_config_all():
     assert "cline" in result.output
     assert "roo" in result.output
     assert "codex" in result.output
+    assert "opencode (~/.config/opencode/opencode.json)" in result.output
 
 
 def test_cli_mcp_generate_config_codex():
@@ -237,6 +238,30 @@ def test_cli_mcp_generate_config_codex():
         "mobile_inspect_trace",
         "mobile_diagnose",
     ]
+
+
+def test_cli_mcp_generate_config_opencode():
+    """Verify OpenCode uses its local-server shape (mcp map, argv array, environment)."""
+    from artemis.interfaces.cli.commands.mcp import _get_config_snippet
+
+    result = runner.invoke(app, ["mcp", "--generate-config", "opencode"])
+    assert result.exit_code == 0
+    assert "mcp_server" in result.output
+    assert "ARTEMIS_MCP_CLIENT" in result.output
+
+    snippet = _get_config_snippet("opencode", "python", "/project")
+    assert "mcpServers" not in snippet
+    server_config = snippet["mcp"]["artemis"]
+    assert server_config["type"] == "local"
+    # OpenCode takes the argv inline and names the env block "environment".
+    assert server_config["command"] == ["python", "-m", "mcp_server"]
+    assert server_config["cwd"] == "/project"
+    assert server_config["enabled"] is True
+    assert "env" not in server_config
+    assert server_config["environment"]["PYTHONPATH"] == "/project"
+    assert server_config["environment"]["ARTEMIS_MCP_CLIENT"] == "opencode"
+    # The default tool-fetch timeout (5s) is too short for the server's startup.
+    assert server_config["timeout"] == 120000
 
 
 def test_cli_mcp_install_antigravity(tmp_path, monkeypatch):
@@ -273,6 +298,10 @@ def test_cli_mcp_install_all(tmp_path, monkeypatch):
     """Verify 'artemis mcp --install all' installs configs and global rules to all supported IDE locations."""
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
+    # OpenCode resolves its global config through XDG, so clear the ambient
+    # overrides to keep the install inside the faked home directory.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
     monkeypatch.setattr("mcp_server.utils.env_utils.get_project_root", lambda: str(tmp_path))
     result = runner.invoke(app, ["mcp", "--install", "all"])
     assert result.exit_code == 0
@@ -282,6 +311,7 @@ def test_cli_mcp_install_all(tmp_path, monkeypatch):
     assert (tmp_path / ".openclaw" / "openclaw.json").exists()
     assert (tmp_path / ".claude.json").exists()
     assert (tmp_path / ".codex" / "config.toml").exists()
+    assert (tmp_path / ".config" / "opencode" / "opencode.json").exists()
 
     import json
 
@@ -314,6 +344,13 @@ def test_cli_mcp_install_all(tmp_path, monkeypatch):
     roo_data = json.loads((tmp_path / ".roo" / "mcp.json").read_text())
     assert roo_data["mcpServers"]["artemis"]["disabled"] is False
 
+    opencode_data = json.loads((tmp_path / ".config" / "opencode" / "opencode.json").read_text())
+    opencode_server = opencode_data["mcp"]["artemis"]
+    assert opencode_server["type"] == "local"
+    assert opencode_server["command"][1:] == ["-m", "mcp_server"]
+    assert opencode_server["environment"]["ARTEMIS_MCP_CLIENT"] == "opencode"
+    assert "mcpServers" not in opencode_data
+
     # Verify global rule files installed across IDEs
     assert (tmp_path / ".gemini" / "GEMINI.md").exists()
     assert (tmp_path / ".gemini" / "rules" / "artemis.md").exists()
@@ -333,6 +370,62 @@ def test_cli_mcp_install_all(tmp_path, monkeypatch):
     assert (tmp_path / ".openclaw" / "OPENCLAW.md").exists()
     assert (tmp_path / ".openclaw" / "rules" / "artemis.md").exists()
     assert (tmp_path / ".codex" / "AGENTS.md").exists()
+    assert (tmp_path / ".config" / "opencode" / "AGENTS.md").exists()
+    assert "Mobile Testing Mindset" in (tmp_path / ".config" / "opencode" / "AGENTS.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_cli_mcp_install_opencode_honors_config_dir_override(tmp_path, monkeypatch):
+    """OPENCODE_CONFIG_DIR replaces the whole OpenCode global config directory."""
+    import json
+
+    override = tmp_path / "custom-opencode"
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "home")
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(override))
+    monkeypatch.setattr("mcp_server.utils.env_utils.get_project_root", lambda: str(tmp_path))
+
+    result = runner.invoke(app, ["mcp", "--install", "opencode"])
+    assert result.exit_code == 0, result.output
+    data = json.loads((override / "opencode.json").read_text())
+    assert data["mcp"]["artemis"]["type"] == "local"
+    assert (override / "AGENTS.md").exists()
+
+
+def test_cli_mcp_install_opencode_honors_xdg_config_home(tmp_path, monkeypatch):
+    """XDG_CONFIG_HOME relocates the OpenCode config directory."""
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "home")
+    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr("mcp_server.utils.env_utils.get_project_root", lambda: str(tmp_path))
+
+    result = runner.invoke(app, ["mcp", "--install", "opencode"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "xdg" / "opencode" / "opencode.json").exists()
+
+
+def test_cli_mcp_install_opencode_preserves_existing_jsonc(tmp_path, monkeypatch):
+    """A user's hand-written opencode.jsonc is never rewritten by the installer."""
+    import json
+
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
+    monkeypatch.setattr("mcp_server.utils.env_utils.get_project_root", lambda: str(tmp_path))
+
+    config_dir = tmp_path / ".config" / "opencode"
+    config_dir.mkdir(parents=True)
+    jsonc = '{\n  // comments must survive\n  "model": "anthropic/claude-sonnet-4-5",\n}\n'
+    (config_dir / "opencode.jsonc").write_text(jsonc, encoding="utf-8")
+
+    result = runner.invoke(app, ["mcp", "--install", "opencode"])
+    assert result.exit_code == 0, result.output
+    # The commented file is byte-for-byte intact; the entry lands in opencode.json,
+    # which OpenCode merges alongside it.
+    assert (config_dir / "opencode.jsonc").read_text(encoding="utf-8") == jsonc
+    data = json.loads((config_dir / "opencode.json").read_text())
+    assert data["mcp"]["artemis"]["type"] == "local"
 
 
 def test_cli_mcp_install_claude_migrates_legacy_claude_md(tmp_path, monkeypatch):

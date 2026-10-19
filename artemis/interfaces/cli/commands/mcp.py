@@ -61,6 +61,23 @@ def _get_vscode_user_dir() -> Path:
         return Path.home() / ".config" / "Code" / "User"
 
 
+def _get_opencode_config_dir() -> Path:
+    """Returns OpenCode's global configuration directory.
+
+    OpenCode roots its global paths through XDG on every platform, so the
+    layout is the same on macOS, Linux and Windows. ``OPENCODE_CONFIG_DIR``
+    replaces the whole directory (see OpenCode's Global config layer), and
+    ``XDG_CONFIG_HOME`` relocates the XDG base, so both are honored before
+    falling back to ``~/.config/opencode``.
+    """
+    override = os.environ.get("OPENCODE_CONFIG_DIR")
+    if override:
+        return Path(override)
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg_config_home) if xdg_config_home else Path.home() / ".config"
+    return base / "opencode"
+
+
 def _get_config_snippet(client: str, python_exe: str, project_root: str) -> dict:
     """Generates MCP configuration dictionary for the specified client."""
     config_body = {
@@ -151,6 +168,29 @@ def _get_config_snippet(client: str, python_exe: str, project_root: str) -> dict
                     "disabled": False,
                     "alwaysAllow": [],
                     "timeout": 120,
+                }
+            }
+        }
+    elif client == "opencode":
+        # OpenCode deviates from the generic MCP shape: servers live under a
+        # top-level "mcp" map, "command" carries the argv inline, and the env
+        # block is "environment". Its default tool-fetch timeout is 5000 ms,
+        # too short for the server's first import + device probe, so raise it.
+        # ARTEMIS_MCP_CLIENT lets the server identify its host at runtime:
+        # OpenCode does not export a marker to MCP children (only to its shell
+        # tool), so the installer supplies one instead of guessing.
+        return {
+            "mcp": {
+                "artemis": {
+                    "type": "local",
+                    "command": [python_exe, "-m", "mcp_server"],
+                    "cwd": project_root,
+                    "environment": {
+                        **config_body["env"],
+                        "ARTEMIS_MCP_CLIENT": "opencode",
+                    },
+                    "enabled": True,
+                    "timeout": 120000,
                 }
             }
         }
@@ -472,6 +512,7 @@ def install_rules(client: str, project_root: str) -> list[str]:
             "roo",
             "openclaw",
             "codex",
+            "opencode",
         ]
         if client == "all"
         else [client]
@@ -553,6 +594,13 @@ def install_rules(client: str, project_root: str) -> list[str]:
             )
             if _inject_rules_block(agents_file, raw_rules):
                 installed_paths.append(str(agents_file))
+        elif target == "opencode":
+            # OpenCode reads one global AGENTS.md (~/.config/opencode/AGENTS.md)
+            # and has no separate rules/ directory, so the managed block is
+            # injected there, preserving any user content already present.
+            agents_file = _get_opencode_config_dir() / "AGENTS.md"
+            if _inject_rules_block(agents_file, raw_rules):
+                installed_paths.append(str(agents_file))
 
     return installed_paths
 
@@ -571,6 +619,7 @@ def install_mcp_config(client: str, python_exe: str, project_root: str) -> list[
             "roo",
             "openclaw",
             "codex",
+            "opencode",
         ]
         if client == "all"
         else [client]
@@ -680,6 +729,17 @@ def install_mcp_config(client: str, python_exe: str, project_root: str) -> list[
             codex_path = codex_home / "config.toml"
             if _merge_codex_toml(codex_path, server_cfg):
                 installed_paths.append(str(codex_path))
+        elif target == "opencode":
+            server_cfg = snippet["mcp"]["artemis"]
+            # OpenCode merges opencode.json and opencode.jsonc, so the entry is
+            # always written to opencode.json: that keeps a hand-edited
+            # opencode.jsonc (and its comments) byte-for-byte intact, whereas
+            # rewriting it would re-serialize the file as plain JSON.
+            opencode_path = _get_opencode_config_dir() / "opencode.json"
+            if _merge_json_file(
+                opencode_path, "artemis", server_cfg, key_name="mcp", strict_parse=True
+            ):
+                installed_paths.append(str(opencode_path))
 
     rules_paths = install_rules(client, project_root)
     installed_paths.extend(rules_paths)
@@ -727,7 +787,7 @@ def mcp_command(
         typer.Option(
             "--install",
             "-i",
-            help="Auto-install and merge ARTEMIS MCP configuration and testing rules into 'antigravity', 'claude', 'cursor', 'windsurf', 'vscode', 'cline', 'roo', 'openclaw', 'codex', or 'all'.",
+            help="Auto-install and merge ARTEMIS MCP configuration and testing rules into 'antigravity', 'claude', 'cursor', 'windsurf', 'vscode', 'cline', 'roo', 'openclaw', 'codex', 'opencode', or 'all'.",
         ),
     ] = None,
     generate_config: Annotated[
@@ -735,7 +795,7 @@ def mcp_command(
         typer.Option(
             "--generate-config",
             "-g",
-            help="Output ready-to-use MCP configuration for 'antigravity', 'cursor', 'claude', 'windsurf', 'vscode', 'cline', 'roo', 'openclaw', 'codex', or 'all'.",
+            help="Output ready-to-use MCP configuration for 'antigravity', 'cursor', 'claude', 'windsurf', 'vscode', 'cline', 'roo', 'openclaw', 'codex', 'opencode', or 'all'.",
         ),
     ] = None,
 ) -> None:
@@ -759,10 +819,11 @@ def mcp_command(
             "roo_code",
             "openclaw",
             "codex",
+            "opencode",
             "all",
         ):
             console.print(
-                f"[bold red]Unsupported install target: '{install_config}'. Use 'antigravity', 'claude', 'cursor', 'windsurf', 'vscode', 'cline', 'roo', 'openclaw', 'codex', or 'all'.[/bold red]"
+                f"[bold red]Unsupported install target: '{install_config}'. Use 'antigravity', 'claude', 'cursor', 'windsurf', 'vscode', 'cline', 'roo', 'openclaw', 'codex', 'opencode', or 'all'.[/bold red]"
             )
             raise typer.Exit(1)
         installed_paths = install_mcp_config(client, python_exe, project_root)
@@ -804,6 +865,9 @@ def mcp_command(
                 ),
                 "codex (~/.codex/config.toml)": _get_config_snippet(
                     "codex", python_exe, project_root
+                ),
+                "opencode (~/.config/opencode/opencode.json)": _get_config_snippet(
+                    "opencode", python_exe, project_root
                 ),
             }
             json_str = json.dumps(all_configs, indent=2)
