@@ -78,6 +78,11 @@ def is_google_family_provider(value: Any) -> bool:
     return _normalize_provider(value) in _GOOGLE_FAMILY_PROVIDERS
 
 
+def is_vertex_provider(value: Any) -> bool:
+    """True for Google Cloud Vertex AI (``vertexai`` / ``vertex``)."""
+    return _normalize_provider(value) in {"vertexai", "vertex"}
+
+
 def is_google_chat_model(model: Any) -> bool:
     """True when a LangChain chat model is backed by Google (by class name).
 

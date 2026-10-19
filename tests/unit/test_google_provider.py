@@ -21,6 +21,7 @@ from artemis.llm.google import (
     is_google_chat_model,
     is_google_family_provider,
     is_google_provider,
+    is_vertex_provider,
     resolve_video_processing,
     strip_provider_prefix,
     supports_agentic_video,
@@ -31,24 +32,25 @@ import pytest
 
 
 @pytest.mark.parametrize(
-    "value, google, family",
+    "value, google, family, vertex",
     [
-        ("google", True, True),
-        ("Gemini", True, True),
-        (ModelProvider.GOOGLE, True, True),
-        (ModelProvider.GEMINI, True, True),
-        ("vertexai", False, True),
-        ("vertex-ai", False, True),
-        (ModelProvider.VERTEX_AI, False, True),
-        ("openai", False, False),
-        ("anthropic", False, False),
-        (None, False, False),
-        ("", False, False),
+        ("google", True, True, False),
+        ("Gemini", True, True, False),
+        (ModelProvider.GOOGLE, True, True, False),
+        (ModelProvider.GEMINI, True, True, False),
+        ("vertexai", False, True, True),
+        ("vertex-ai", False, True, True),
+        (ModelProvider.VERTEX_AI, False, True, True),
+        ("openai", False, False, False),
+        ("anthropic", False, False, False),
+        (None, False, False, False),
+        ("", False, False, False),
     ],
 )
-def test_provider_identity_tiers(value, google, family):
+def test_provider_identity_tiers(value, google, family, vertex):
     assert is_google_provider(value) is google
     assert is_google_family_provider(value) is family
+    assert is_vertex_provider(value) is vertex
 
 
 def test_google_chat_model_is_detected_by_class_name():

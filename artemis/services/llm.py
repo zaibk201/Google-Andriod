@@ -32,7 +32,7 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from artemis.config import (
     PAUSE_FILE,
@@ -42,7 +42,7 @@ from artemis.config import (
 )
 from artemis.context import ArtemisContext
 from artemis.data_engine.trace import CURRENT_TRACE_ID, DataEngineCallbackHandler
-from artemis.llm.google import is_google_chat_model, is_google_provider
+from artemis.llm.google import is_google_chat_model, is_google_provider, is_vertex_provider
 from artemis.llm.reliability import (
     CircuitBreaker,
     FailureCategory,
@@ -521,6 +521,61 @@ def _inject_parent_trace_id(trace_id, *args, **kwargs):
     return args, kwargs
 
 
+def normalize_vertex_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Normalize message sequence for Vertex AI Gemini models.
+
+    Vertex AI rejects turns where tool response parts (functionResponse) are
+    followed by user prompt/observation text with HTTP 400 ('Requests ending with
+    a model turn are not supported'). In ARTEMIS history, tool execution results
+    (ToolMessage) naturally precede subsequent screen observations (HumanMessage).
+
+    This normalizer produces a copy of the message list where HumanMessages
+    in a tool-call turn are positioned before ToolMessages, ensuring LangChain's
+    Vertex serializer generates [text, functionResponse] part ordering without
+    altering the underlying stored conversation history. It also ensures each
+    ToolMessage has its 'name' populated from the preceding AIMessage tool calls,
+    or falls back safely to tool_call_id / 'tool' for orphan or unmatched messages.
+    """
+    if not messages or not isinstance(messages, list):
+        return messages
+
+    result: list[BaseMessage] = []
+    i = 0
+    n = len(messages)
+    while i < n:
+        msg = messages[i]
+        if isinstance(msg, ToolMessage) and getattr(msg, "name", None) is None:
+            fallback_name = getattr(msg, "tool_call_id", None) or "tool"
+            msg = msg.model_copy(update={"name": fallback_name})
+        result.append(msg)
+        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+            ai_msg = msg
+            tool_calls_map = {}
+            for tc in ai_msg.tool_calls or []:
+                if isinstance(tc, dict) and tc.get("id"):
+                    tool_calls_map[tc["id"]] = tc.get("name")
+            j = i + 1
+            tool_msgs: list[BaseMessage] = []
+            non_tool_msgs: list[BaseMessage] = []
+            while j < n and not isinstance(messages[j], AIMessage):
+                m = messages[j]
+                if isinstance(m, ToolMessage):
+                    tool_call_id = getattr(m, "tool_call_id", None)
+                    if getattr(m, "name", None) is None:
+                        tool_name = tool_calls_map.get(tool_call_id) or tool_call_id or "tool"
+                        m = m.model_copy(update={"name": tool_name})
+                    tool_msgs.append(m)
+                else:
+                    non_tool_msgs.append(m)
+                j += 1
+            result.extend(non_tool_msgs)
+            result.extend(tool_msgs)
+            i = j
+        else:
+            i += 1
+    return result
+
+
 class RobustChatModelWrapper:
     """Universal LangChain Runnable wrapper ensuring robust execution and telemetry."""
 
@@ -638,7 +693,42 @@ class RobustChatModelWrapper:
             engine = _get_current_data_engine()
         record_llm_usage(engine, response, source=self._endpoint_key())
 
+    def _is_vertex(self) -> bool:
+        if self.endpoint is not None:
+            provider = getattr(self.endpoint, "provider", None)
+            if is_vertex_provider(provider):
+                return True
+        model = self.base_model
+        while hasattr(model, "bound"):
+            model = model.bound
+        return "VertexAI" in type(model).__name__
+
+    @staticmethod
+    def _prepare_vertex_inputs(args: tuple, kwargs: dict) -> tuple[tuple, dict]:
+        if args and isinstance(args[0], list):
+            args = (normalize_vertex_messages(args[0]), *args[1:])
+        elif "messages" in kwargs and isinstance(kwargs["messages"], list):
+            kwargs = dict(kwargs)
+            kwargs["messages"] = normalize_vertex_messages(kwargs["messages"])
+        elif "input" in kwargs and isinstance(kwargs["input"], list):
+            kwargs = dict(kwargs)
+            kwargs["input"] = normalize_vertex_messages(kwargs["input"])
+        return args, kwargs
+
+    def _prepare_inputs(self, args: tuple, kwargs: dict) -> tuple[tuple, dict]:
+        if self._is_vertex():
+            args, kwargs = self._prepare_vertex_inputs(args, kwargs)
+        return args, kwargs
+
+    def invoke(self, *args, **kwargs):
+        args, kwargs = self._prepare_inputs(args, kwargs)
+        args, kwargs, _ = self._traced_call(args, kwargs)
+        response = self.base_model.invoke(*args, **kwargs)
+        self._meter_usage(response)
+        return response
+
     async def ainvoke(self, *args, **kwargs):
+        args, kwargs = self._prepare_inputs(args, kwargs)
         args, kwargs, _ = self._traced_call(args, kwargs)
         response = await _run_with_recovery(
             functools.partial(self.base_model.ainvoke, *args, **kwargs),
@@ -658,6 +748,7 @@ class RobustChatModelWrapper:
         signals the UI to drop it, and retries the whole call per policy;
         partial or duplicated chunks can never reach message history.
         """
+        args, kwargs = self._prepare_inputs(args, kwargs)
         args, kwargs, _ = self._traced_call(args, kwargs)
         emit_deltas = bool(self.ctx and self.ctx.data_engine)
         response = await _run_with_recovery(
@@ -783,6 +874,12 @@ async def acomplete(llm, *args, **kwargs):
     """
     if isinstance(llm, RobustChatModelWrapper):
         return await llm.complete(*args, **kwargs)
+
+    model = llm
+    while hasattr(model, "bound"):
+        model = model.bound
+    if "VertexAI" in type(model).__name__:
+        args, kwargs = RobustChatModelWrapper._prepare_vertex_inputs(args, kwargs)
 
     try:
         full_response = None
