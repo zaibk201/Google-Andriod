@@ -415,6 +415,16 @@ def format_minimal_list_with_elements(
             line = f"[{idx}] {kind}: '{shown}' | Bounds: {norm_bounds}"
             if error:
                 line += f" | Error: '{error}'"
+            control_state = {}
+            for attribute in ("checked", "enabled"):
+                value = node.get(attribute)
+                if isinstance(value, str):
+                    value = value.strip().lower()
+                    if value in ("true", "false"):
+                        value = value == "true"
+                if isinstance(value, bool):
+                    control_state[attribute] = value
+                    line += f" | {attribute}: {str(value).lower()}"
             lines.append(line)
             items_bounds.append((idx, (left, top, right, bottom)))
 
@@ -427,6 +437,7 @@ def format_minimal_list_with_elements(
                 "resource_id": node.get("resource-id"),
                 "is_ocr": False,
             }
+            element.update(control_state)
             if not text.strip():
                 element["is_hint"] = True
             if error:

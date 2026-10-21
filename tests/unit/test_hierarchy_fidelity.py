@@ -80,8 +80,10 @@ def test_minimal_list_shows_hint_for_empty_inputs_and_errors():
     )
     text, items, labels = format_minimal_list_with_elements(elements[1:], 1000, 1000)
     lines = text.splitlines()
-    assert lines[0] == "[1] Hint: 'Search settings' | Bounds: [0,0][100,100]"
-    assert lines[1] == "[2] Text: 'abc' | Bounds: [0,200][100,300] | Error: 'Password too short'"
+    assert lines[0] == "[1] Hint: 'Search settings' | Bounds: [0,0][100,100] | enabled: true"
+    assert lines[1] == (
+        "[2] Text: 'abc' | Bounds: [0,200][100,300] | Error: 'Password too short' | enabled: true"
+    )
     assert len(lines) == 2 and labels == ["1", "2"]
     assert items[0]["is_hint"] is True and items[0]["text"] == "Search settings"
     assert items[1]["error"] == "Password too short"
