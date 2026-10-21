@@ -15,6 +15,7 @@
 import asyncio
 import os
 from pathlib import Path
+import shlex
 import signal
 import subprocess
 import tempfile
@@ -78,6 +79,194 @@ class UnifiedMobileController(UnifiedMobileControllerBase):
             if process.returncode is None:
                 process.terminate()
                 await asyncio.wait_for(process.wait(), timeout=5.0)
+
+    async def tap_at(
+        self,
+        x: int,
+        y: int,
+        long_press: bool = False,
+        long_press_duration: int = 1000,
+        times: int = 1,
+        delay_ms: int = 100,
+    ) -> TapOutput:
+        try:
+            if long_press:
+                success = await self._driver.long_press(x, y, duration_ms=long_press_duration)
+            else:
+                success = await self._driver.tap(
+                    x, y, duration_ms=100, times=times, delay_ms=delay_ms
+                )
+            return TapOutput(error=None if success else f"Tap failed at ({x}, {y})")
+        except Exception as e:
+            return TapOutput(error=str(e))
+
+    async def tap_percentage(
+        self,
+        x_percent: int,
+        y_percent: int,
+        long_press: bool = False,
+        long_press_duration: int = 1000,
+    ) -> TapOutput:
+        """Tap at percentage-based coordinates (0 to 100)."""
+        norm_x = int(x_percent * 10)
+        norm_y = int(y_percent * 10)
+        success = await self._driver.tap_normalized(
+            norm_x, norm_y, long_press=long_press, duration_ms=long_press_duration
+        )
+        return TapOutput(
+            error=None if success else f"Tap percentage failed at ({x_percent}%, {y_percent}%)"
+        )
+
+    async def tap_element(
+        self,
+        resource_id: str | None = None,
+        text: str | None = None,
+        index: int = 0,
+        long_press: bool = False,
+        long_press_duration: int = 1000,
+    ) -> TapOutput:
+        """Tap on a UI element by finding it in the hierarchy."""
+        success = await self._driver.tap_element(
+            resource_id=resource_id,
+            text=text,
+            index=index,
+            long_press=long_press,
+            duration_ms=long_press_duration,
+        )
+        return TapOutput(
+            error=None
+            if success
+            else f"Failed to tap element (resource_id={resource_id}, text={text})"
+        )
+
+    async def swipe_coords(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        duration: int = 400,
+    ) -> str | None:
+        """Swipe between two coordinate points."""
+        success = await self._driver.swipe(start_x, start_y, end_x, end_y, duration_ms=duration)
+        return None if success else f"Swipe failed from ({start_x},{start_y}) to ({end_x},{end_y})"
+
+    async def swipe_percentage(
+        self,
+        start_x_percent: int,
+        start_y_percent: int,
+        end_x_percent: int,
+        end_y_percent: int,
+        duration: int = 400,
+    ) -> str | None:
+        """Swipe using percentage-based coordinates (0 to 100)."""
+        start_norm = [int(start_x_percent * 10), int(start_y_percent * 10)]
+        end_norm = [int(end_x_percent * 10), int(end_y_percent * 10)]
+        success = await self._driver.swipe_normalized(start_norm, end_norm, duration_ms=duration)
+        return None if success else "Swipe percentage failed"
+
+    async def swipe_request(self, request: SwipeRequest) -> str | None:
+        mode = request.swipe_mode
+
+        if isinstance(mode, SwipeStartEndCoordinatesRequest):
+            return await self.swipe_coords(
+                start_x=mode.start.x,
+                start_y=mode.start.y,
+                end_x=mode.end.x,
+                end_y=mode.end.y,
+                duration=request.duration or 400,
+            )
+        elif isinstance(mode, SwipeStartEndPercentagesRequest):
+            return await self.swipe_percentage(
+                start_x_percent=mode.start.x_percent,
+                start_y_percent=mode.start.y_percent,
+                end_x_percent=mode.end.x_percent,
+                end_y_percent=mode.end.y_percent,
+                duration=request.duration or 400,
+            )
+        else:
+            return "Unsupported swipe mode"
+
+    async def type_text(self, text: str, clear_existing: bool = True) -> bool:
+        return await self._driver.input_text(text, clear_existing=clear_existing)
+
+    async def take_screenshot(self) -> str:
+        screen_data = await self._driver.get_screen_data()
+        return screen_data.screenshot_base64
+
+    async def launch_app(self, package_or_bundle_id: str) -> bool:
+        return await self._driver.launch_app(package_or_bundle_id)
+
+    async def terminate_app(self, package_or_bundle_id: str | None) -> bool:
+        if not package_or_bundle_id:
+            return False
+        return await self._driver.stop_app(package_or_bundle_id)
+
+    async def open_url(self, url: str) -> bool:
+        # shlex.quote (not naive '...' wrapping) so a URL containing a single
+        # quote can't break out of the quoting and inject extra shell commands.
+        await self._driver.execute_shell(
+            f"am start -a android.intent.action.VIEW -d {shlex.quote(url)}"
+        )
+        return True
+
+    async def go_back(self) -> bool:
+        return await self._driver.press_key("back")
+
+    async def go_home(self) -> bool:
+        return await self._driver.press_key("home")
+
+    async def press_enter(self) -> bool:
+        return await self._driver.press_key("enter")
+
+    async def press_key(self, keycode: str) -> bool:
+        return await self._driver.press_key(keycode)
+
+    async def erase_text(self, nb_chars: int | None = None) -> bool:
+        if nb_chars is not None and nb_chars > 0:
+            for _ in range(nb_chars):
+                await self._driver.press_key("delete")
+            return True
+        # Best-effort full clear: End -> Ctrl+A -> Delete
+        try:
+            clear_cmd = (
+                "input keyevent 123 && "
+                "input keycombination 113 29 && input keyevent 67 && "
+                "input keyevent 67 67 67 67 67 67 67 67 67 67 67 67 67 67 67 67 67 67 67 67"
+            )
+            await self._driver.execute_shell(clear_cmd)
+        except Exception:
+            for _ in range(30):
+                await self._driver.press_key("delete")
+        return True
+
+    async def get_ui_elements(self) -> list[dict]:
+        screen_data = await self._driver.get_screen_data()
+        return screen_data.ui_elements or []
+
+    async def get_screen_data(self) -> "ScreenDataResponse":
+        """Get screen data including screenshot, UI hierarchy, dimensions, and platform."""
+        data = await self._driver.get_screen_data()
+        return ScreenDataResponse(
+            base64=data.screenshot_base64,
+            elements=data.ui_elements or [],
+            width=data.width,
+            height=data.height,
+            platform=data.platform,
+        )
+
+    async def find_element(
+        self,
+        resource_id: str | None = None,
+        text: str | None = None,
+        index: int = 0,
+    ) -> tuple[dict | None, str | None]:
+        elem, _, error = await self._driver.find_element(
+            resource_id=resource_id,
+            text=text,
+            index=index,
+        )
+        return elem, error
 
     def _get_device_id(self) -> str:
         if self.ctx and self.ctx.device and self.ctx.device.device_id:
