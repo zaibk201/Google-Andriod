@@ -26,52 +26,36 @@ from uuid import uuid4
 from artemis.config.paths import get_temp_dir
 from artemis.context import ArtemisContext
 from artemis.drivers.factory import get_driver
-from artemis.drivers.base import BaseDeviceDriver
-from artemis.controllers.device_controller import ScreenDataResponse
-from artemis.controllers.types import (
-    SwipeRequest,
-    SwipeStartEndCoordinatesRequest,
-    SwipeStartEndPercentagesRequest,
-    TapOutput,
-)
-from artemis.utils.logger import get_logger
 from artemis.utils.video import (
     ANDROID_RECORDING_SEGMENT_SECONDS,
+    await_scrcpy_first_frame,
+    build_scrcpy_record_command,
+    get_android_display_state,
+    remux_recording_to_mp4,
+    render_timeline_clip,
+    write_recording_manifest,
+)
+from third_party.mobile_use.controllers.unified_controller import UnifiedMobileControllerBase
+from third_party.mobile_use.utils.logger import get_logger
+from third_party.mobile_use.utils.video import (
     DEFAULT_MAX_DURATION_SECONDS,
     RecordingSession,
     VideoRecordingResult,
-    await_scrcpy_first_frame,
-    build_scrcpy_record_command,
-    cleanup_video_segments,
-    concatenate_videos,
-    get_android_display_state,
+    abort_recording,
     get_active_session,
-    has_active_session,
-    normalize_recording_to_mp4,
-    remux_recording_to_mp4,
-    render_timeline_clip,
+    no_active_recording,
+    recording_already_active,
     remove_active_session,
     set_active_session,
-    trim_video,
-    write_recording_manifest,
 )
 
 logger = get_logger(__name__)
 
 
-class UnifiedMobileController:
+class UnifiedMobileController(UnifiedMobileControllerBase):
     def __init__(self, ctx: ArtemisContext):
-        self.ctx = ctx
-        self._driver: BaseDeviceDriver = get_driver(ctx)
+        super().__init__(ctx, get_driver(ctx))
         self._segment_cache: dict[tuple[str, int, float, float], VideoRecordingResult] = {}
-
-    @property
-    def driver(self) -> BaseDeviceDriver:
-        return self._driver
-
-    @property
-    def controller(self) -> Any:
-        return self._driver
 
     @staticmethod
     async def _spawn_scrcpy(command: list[str]) -> asyncio.subprocess.Process:
@@ -313,10 +297,7 @@ class UnifiedMobileController:
 
         session = get_active_session(device_id)
         if not session:
-            return VideoRecordingResult(
-                success=False,
-                message=f"No active recording for device {device_id}",
-            )
+            return no_active_recording(device_id)
 
         cache_key = None
         if end_time is not None:
@@ -618,11 +599,8 @@ class UnifiedMobileController:
             await self._driver.start_video_recording(output_dir)
             return VideoRecordingResult(success=True, message="Mock recording started")
 
-        if has_active_session(device_id):
-            return VideoRecordingResult(
-                success=False,
-                message=f"Recording already in progress for device {device_id}",
-            )
+        if already_active := recording_already_active(device_id):
+            return already_active
 
         try:
             if not output_dir:
@@ -725,11 +703,7 @@ class UnifiedMobileController:
 
         except Exception as e:
             logger.error(f"Failed to start scrcpy recording: {e}")
-            remove_active_session(device_id)
-            return VideoRecordingResult(
-                success=False,
-                message=f"Failed to start recording: {e}",
-            )
+            return abort_recording(device_id, "start", e)
 
     async def stop_video_recording(self) -> VideoRecordingResult:
         """Stop scrcpy recording and return the converted MP4 video file."""
@@ -751,10 +725,7 @@ class UnifiedMobileController:
 
         session = get_active_session(device_id)
         if not session:
-            return VideoRecordingResult(
-                success=False,
-                message=f"No active recording for device {device_id}",
-            )
+            return no_active_recording(device_id)
 
         # Mark inactive and cancel watchdog task
         session.is_active = False
@@ -861,26 +832,7 @@ class UnifiedMobileController:
         except Exception as e:
             logger.error(f"Failed to stop scrcpy recording: {e}")
             self._record_recording_failure(session, str(e))
-            remove_active_session(device_id)
-            return VideoRecordingResult(
-                success=False,
-                message=f"Failed to stop recording: {e}",
-            )
-
-    async def _convert_mkv_to_mp4(self, mkv_path: Path, mp4_path: Path) -> bool:
-        """Normalize MKV into a fixed-size, browser-safe MP4.
-
-        Stream-copying a scrcpy H.264 track is unsafe because historical or
-        recovered recordings may contain resolution changes. Re-encoding onto
-        the initial capture canvas guarantees one coded size for the full MP4.
-        """
-        session = get_active_session(self._get_device_id())
-        return await normalize_recording_to_mp4(
-            mkv_path,
-            mp4_path,
-            session.capture_width if session else None,
-            session.capture_height if session else None,
-        )
+            return abort_recording(device_id, "stop", e)
 
     async def cleanup(self) -> None:
         await self._driver.disconnect()
