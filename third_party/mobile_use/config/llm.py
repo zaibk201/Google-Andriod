@@ -57,6 +57,22 @@ class LLM(BaseModel):
     model_config = {"ignored_types": (CyFunctionDetector,)}
     provider: LLMProvider
     model: str
+    # Per-endpoint base URL (jsonc key: "api_base"). Closes the gap where a
+    # custom endpoint (corporate gateway, LiteLLM proxy, local server) could
+    # only be configured process-wide through the protocol-scoped environment
+    # variables (OPENAI_BASE_URL / ANTHROPIC_BASE_URL): with this field two
+    # nodes can talk to two different endpoints in the same run — e.g. the
+    # planner through a corporate gateway while a util node uses the official
+    # API. Resolution order in ModelFactory:
+    #   endpoint.api_base  >  settings/env base URL  >  provider default.
+    # The value is provider-shaped, not host-shaped: the OpenAI driver expects
+    # the /v1 prefix in the URL while the Anthropic driver appends /v1/messages
+    # itself, so the same gateway host is spelled differently per provider —
+    # which is also why api_base must never survive a provider switch (see
+    # _drop_foreign_api_base below). Credentials deliberately stay OUT of this
+    # schema: keys and Bearer tokens belong in .env (ANTHROPIC_AUTH_TOKEN,
+    # OPENAI_API_KEY, ...), keeping model configs shareable and secret-free.
+    api_base: str | None = None
     temperature: float | None = None
     thinking_budget: int | None = None
     thinking_level: Literal["minimal", "low", "medium", "high"] | None = None
@@ -75,8 +91,22 @@ class LLM(BaseModel):
         elif self.provider == "vertexai":
             validate_vertex_ai_credentials()
         elif self.provider == "anthropic":
-            if not (settings.ANTHROPIC_API_KEY or os.environ.get("ANTHROPIC_API_KEY")):
-                raise Exception(f"{name} requires ANTHROPIC_API_KEY in .env")
+            # "anthropic" selects the wire protocol, not necessarily
+            # api.anthropic.com: Bearer-only gateways authenticate with
+            # ANTHROPIC_AUTH_TOKEN and never hold a real x-api-key, so
+            # requiring ANTHROPIC_API_KEY alone would reject valid gateway
+            # setups at startup and force users to mirror the token into
+            # ANTHROPIC_API_KEY as a workaround. Either credential satisfies
+            # this check; ModelFactory decides which one is actually sent.
+            if not (
+                settings.ANTHROPIC_API_KEY
+                or settings.get_anthropic_auth_token()
+                or os.environ.get("ANTHROPIC_API_KEY")
+            ):
+                raise Exception(
+                    f"{name} requires ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN"
+                    " for Bearer-only gateways) in .env"
+                )
         elif self.provider == "openrouter":
             if not settings.OPEN_ROUTER_API_KEY:
                 raise Exception(f"{name} requires OPEN_ROUTER_API_KEY in .env")

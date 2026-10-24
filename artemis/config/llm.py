@@ -130,6 +130,25 @@ class LLMConfig(LLMConfigBase):
         return val
 
 
+def _drop_foreign_api_base(cfg: dict, base: dict, override: dict) -> None:
+    """Drop an inherited ``api_base`` when the merged config switched provider.
+
+    ``api_base`` is provider-shaped (see the field's comment on :class:`LLM`),
+    so a node that overrides only ``provider``/``model`` must not inherit the
+    default's endpoint URL: a Google node under an Anthropic-gateway default
+    would otherwise aim its Gemini calls at the gateway. An ``api_base``
+    written explicitly in the node override always wins; the same rule is
+    applied one level down to the merged ``fallback`` dict.
+    """
+    if cfg.get("provider") != base.get("provider") and "api_base" not in override:
+        cfg.pop("api_base", None)
+    fb, fb_base = cfg.get("fallback"), base.get("fallback")
+    fb_override = override.get("fallback") or {}
+    if isinstance(fb, dict) and isinstance(fb_base, dict):
+        if fb.get("provider") != fb_base.get("provider") and "api_base" not in fb_override:
+            fb.pop("api_base", None)
+
+
 def _expand_default_into_nodes(config_dict: dict) -> dict:
     """Expand unified config format with 'default' and 'nodes' into full LLMConfig schema."""
     if "planner" in config_dict and "utils" in config_dict:
@@ -180,6 +199,7 @@ def _expand_default_into_nodes(config_dict: dict) -> dict:
                     node_cfg[k] = {**node_cfg[k], **v}
                 else:
                     node_cfg[k] = v
+        _drop_foreign_api_base(node_cfg, default_model_cfg, nodes_override.get(node, {}))
         result[node] = node_cfg
 
     utils_dict: dict[str, Any] = {}
@@ -191,6 +211,7 @@ def _expand_default_into_nodes(config_dict: dict) -> dict:
                     util_cfg[k] = {**util_cfg[k], **v}
                 else:
                     util_cfg[k] = v
+        _drop_foreign_api_base(util_cfg, default_model_cfg, nodes_override.get(util, {}))
         utils_dict[util] = util_cfg
     result["utils"] = utils_dict
 
@@ -235,11 +256,13 @@ def deep_merge_llm_config(base: LLMConfig, overrides: dict) -> LLMConfig:
     base_dict = base.model_dump()
 
     def merge(d1: dict, d2: dict) -> None:
+        previous = dict(d1)
         for k, v in d2.items():
             if k in d1 and isinstance(d1[k], dict) and isinstance(v, dict):
                 merge(d1[k], v)
             else:
                 d1[k] = v
+        _drop_foreign_api_base(d1, previous, d2)
 
     merge(base_dict, overrides)
     return LLMConfig.model_validate(base_dict)
