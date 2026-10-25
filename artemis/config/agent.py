@@ -340,6 +340,16 @@ class ExplorerConfig(BaseModel):
         default="flash",
         description="Explorer version mode when main system runs under Pro profile (Graph / Operator / Validator).",
     )
+    detector_point_order: Literal["yx", "xy"] = Field(
+        default="yx",
+        description=(
+            "Coordinate order the object detector model returns in ``point``"
+            " (normalized 0-1000). 'yx' is Gemini's native pointing format (the"
+            " default); 'xy' fits models that point as [x, y] natively, such as"
+            " the Qwen-VL family. The detector prompt asks for this order and the"
+            " result is converted to [x, y]."
+        ),
+    )
     caching: bool | None = Field(
         default=None,
         description=(

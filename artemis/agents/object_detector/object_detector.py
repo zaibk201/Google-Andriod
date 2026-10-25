@@ -32,6 +32,18 @@ logger = get_logger(__name__)
 _DETECTOR_SEMAPHORE = asyncio.Semaphore(6)
 
 
+def _detector_point_order() -> str:
+    """``explorer.detector_point_order`` from the agent config ('yx' when unavailable)."""
+    try:
+        from artemis.config import load_agent_config
+
+        order = load_agent_config().explorer.detector_point_order
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.debug(f"Agent config unavailable; detector point order defaults to yx: {exc}")
+        return "yx"
+    return order if order in ("yx", "xy") else "yx"
+
+
 async def _detect_single_label(
     llm,
     ctx,
@@ -123,6 +135,12 @@ async def _run_object_detection(
 
     queries = queries or []
     templates = templates or ["Point to the following objects: {labels_str}"]
+    # The detector model's native pointing order: Gemini points [y, x] (the default),
+    # Qwen-VL-family models point [x, y] and ignore an instruction to swap. Ask for the
+    # model's own order and convert to [x, y] below.
+    point_order = _detector_point_order()
+    if point_order == "xy":
+        templates = [t.replace("[y, x]", "[x, y]") for t in templates]
     try:
         llm = get_llm(ctx, name="object_detector")
     except Exception:
@@ -165,10 +183,11 @@ async def _run_object_detection(
         except Exception as e:
             logger.error(f"Task raised exception: {e}")
 
-    # Swap coordinates from [y, x] normalized to [x, y] normalized if needed
+    # Normalize to [x, y]: swap when the model points [y, x] (Gemini's native order).
     for item in fused_results:
         if (
-            isinstance(item, dict)
+            point_order == "yx"
+            and isinstance(item, dict)
             and "point" in item
             and isinstance(item["point"], list)
             and len(item["point"]) == 2
