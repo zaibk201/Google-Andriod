@@ -53,6 +53,19 @@ from third_party.mobile_use.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
+def _operator_uses_google() -> bool:
+    """Whether the configured operator model is a Google one (the only thing pre-warming warms)."""
+    try:
+        from artemis.config.llm import get_default_llm_config
+        from artemis.llm.google import is_google_provider
+
+        return is_google_provider(str(get_default_llm_config().get_agent("operator").provider))
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.debug(f"LLM config unavailable; keeping Gemini pre-warming: {exc}")
+        return True
+
+
 load_dotenv()
 
 
@@ -133,6 +146,10 @@ class Agent(AgentBase):
             publish_startup_progress(
                 "model_ready", "Model connection is ready (fake LLM)", session_id=self._session_id
             )
+            return
+        if not _operator_uses_google():
+            # Pre-warming only opens Gemini connection pools; nothing to warm for other providers.
+            logger.info("Skipping LLM pre-warming: configured models are not Gemini.")
             return
         publish_startup_progress(
             "model_warmup", "Warming the model connection", session_id=self._session_id
